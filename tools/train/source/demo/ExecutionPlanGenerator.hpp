@@ -226,6 +226,7 @@ public:
         shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, true);
         shared_ptr<Recomputer> recomputer = make_shared<Recomputer>(profiler, grd_allocator, mem_bgt);
         recomputer->memory_calibrated_progressive_recomputation();
+        return 0;
     }
 };
 

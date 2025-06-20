@@ -59,6 +59,7 @@ for budget in 8 6; do
 
         for batch in "${batchs[@]}"; do
             echo "${model} ${batch} ${budget}"
+            cd "${root_dir}"
             # Run GeneratePlan with and without recompute flag
             ./runTrainDemo.out GeneratePlan "${model}" "${batch}" "${budget}"
             ./runTrainDemo.out GeneratePlan "${model}" "${batch}" "${budget}" true
