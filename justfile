@@ -7,6 +7,7 @@ default:
 #
 # flag to build on apple silicon
 
+default-j := `nproc`
 mac-m1-flag := if os() == 'macos' { if arch() == 'aarch64' { '-DCMAKE_OSX_ARCHITECTURES=arm64' } else { '' } } else { '' }
 
 # other flags to build melon
@@ -34,11 +35,11 @@ flags := '\
 schema-gen:
     ./schema/generate.sh
 
-build n="4":
+build j=default-j:
     mkdir -p build && \
     cd build && \
     cmake .. {{ mac-m1-flag }} {{ flags }} && \
-    make -j{{ n }}
+    make -j{{ j }}
 
 clean:
     rm -rf build/
