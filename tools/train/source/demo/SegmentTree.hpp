@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <functional>
 
+#include <memory>
+#include <limits>
+
 using namespace std;
 int N, Q;
 

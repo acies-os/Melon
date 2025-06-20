@@ -15,6 +15,10 @@
 #include <regex>
 #include "DemoUnit.hpp"
 
+#include <memory>
+#include <limits>
+#include <iterator>
+
 using namespace std;
 
 
