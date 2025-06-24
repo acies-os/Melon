@@ -22,8 +22,8 @@
 using namespace std;
 
 
-//#define debug_print(format, ...) {printf(format, ##__VA_ARGS__);fflush(stdout);}
-#define debug_print(format, ...)
+#define debug_print(format, ...) {printf(format, ##__VA_ARGS__);fflush(stdout);}
+// #define debug_print(format, ...)
 
 
 class VanillaAllocator;
