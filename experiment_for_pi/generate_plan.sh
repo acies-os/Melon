@@ -1,21 +1,15 @@
 #!/bin/bash
 
 models=("MobilenetV2" "Squeezenet" "MobilenetV1" "Resnet50")
-root_dir="./build_local"
-
-# Make sure build folder exists
-mkdir -p "${root_dir}"
-
-# Copy profiling data
-cp -r profile/ "${root_dir}/"
-cp -r resize/ "${root_dir}/"
-cp -r cost/ "${root_dir}/"
+root_dir="."
 
 # Run cmake
 cmake \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DMNN_USE_LOGCAT=false \
-    -DMNN_BUILD_FOR_ANDROID_COMMAND=false \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DMNN_USE_LOGCAT=OFF \
+    -DMNN_BUILD_FOR_ANDROID_COMMAND=OFF \
     -DMNN_BUILD_TRAIN=ON \
     -DMNN_BUILD_BENCHMARK=ON \
     -DMNN_OPENCL=OFF \
@@ -24,10 +18,10 @@ cmake \
     -DPROFILE_COST_IN_LOG=OFF \
     ../
 
-make -j20
+make -j8
 
 # Copy compiled files and tools to build directory
-cp ./*.* "${root_dir}/"
+# cp ./*.* "${root_dir}/"
 cp -r tools/ "${root_dir}/"
 
 # Prepare directories for each model
@@ -61,7 +55,7 @@ for budget in 8 6; do
             echo "${model} ${batch} ${budget}"
             # Run GeneratePlan with and without recompute flag
             ./runTrainDemo.out GeneratePlan "${model}" "${batch}" "${budget}"
-            ./runTrainDemo.out GeneratePlan "${model}" "${batch}" "${budget}" true
+            # ./runTrainDemo.out GeneratePlan "${model}" "${batch}" "${budget}" true
         done
     done
 done

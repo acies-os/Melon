@@ -4,7 +4,7 @@
 models=("MobilenetV2" "Squeezenet" "MobilenetV1" "Resnet50")
 
 # Root build/output directory
-root_dir="./build_local"
+root_dir="."
 
 # Ensure local directory structure
 for model in "${models[@]}"; do
@@ -27,8 +27,10 @@ for target in "profile" "resize" "cost"; do
     echo "==== Building with $build_opt ===="
 
     # Build with profiling flags
-    cmake -B build_local -S ../ \
+    cmake -B "./$target" -S ../ \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DMNN_USE_LOGCAT=OFF \
         -DMNN_BUILD_FOR_ANDROID_COMMAND=OFF \
         -DMNN_BUILD_TRAIN=ON \
@@ -36,7 +38,7 @@ for target in "profile" "resize" "cost"; do
         -DMNN_OPENCL=OFF \
         ${build_opt}
 
-    make -C build_local -j8
+    make -C "./$target" -j8
 
     # Profiling loop
     for model in "${models[@]}"; do
@@ -59,7 +61,8 @@ for target in "profile" "resize" "cost"; do
             rm -f "${root_dir}/memory_profile.out"
 
             # Run the profiling executable
-            ./build_local/runTrainDemo.out MemTimeProfile "$model" dataset/ dataset/train.txt "$batch" "$batch" "$target" \
+            ./"$target"/runTrainDemo.out MemTimeProfile \
+                "$model" dataset/ dataset/train.txt "$batch" "$batch" "$target" \
                 > "${output_dir}/${model}.${batch}.${target}.out"
 
             echo "Finished $model $batch $target"
