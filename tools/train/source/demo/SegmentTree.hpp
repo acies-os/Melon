@@ -9,13 +9,13 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
-#include <functional>
+// #include <functional>
 
 #include <memory>
 #include <limits>
 
 using namespace std;
-int N, Q;
+// int N, Q;
 
 template<class T, class F>
 class SegmentTree {

@@ -780,11 +780,15 @@ void Recomputer::get_feature_map() {
 }
 
 void Recomputer::calibrated_compute(string ith, bool recompute) {
+    auto current_size = grd_allocator->current_size(calibrated_timestamp);
     while (grd_allocator->current_size(calibrated_timestamp) > budget_b) {
         string evict_t;
         for (auto t: allocated_tensor) {
+            // `metric` is a member vairable (map<string, double>) that stores
+            // the TPS score for each tensor
             update_metric(t);
             debug_print("metric_tps[%s]=%.3lf\n", t.c_str(), metric[t])
+            // find the tensor with the highest score
             if (evict_t.empty() || metric[evict_t] < metric[t]) {
                 evict_t = t;
             }
@@ -829,10 +833,18 @@ void Recomputer::memory_calibrated_progressive_recomputation() {
                         __FUNCTION__, opidx, profiler->io_info.size(), exe_seq.size())
         }
         auto &info = profiler->io_info[opidx];
+
+        // comp_src will contains missing input operators that must be recomputed
         auto comp_src = get_compute_source(info.opid);
+
         if (!comp_src.empty()) {
+            // there are missing inputs; recompute them
             vector<string> src(comp_src.begin(), comp_src.end());
+
+            // sort so that the missing tensors will be computed in the correct dependency order
             sort(src.begin(), src.end(), [](string a, string b) { return stoi(a) < stoi(b); });
+
+            // "stretches" the lifetime of existing tensors to account for the additional recomputation
             grd_allocator->insert_tensors(src, calibrated_timestamp);
             for(auto tid: src) {
                 calibrated_compute(tid, true);
@@ -882,13 +894,13 @@ struct GreedyAllocator::Tensor {
 
     bool operator<(const Tensor &b) const {
         if (life != b.life) {
-            return life > b.life;
+            return life > b.life;   // sort by lifetime, descending
         } else if (size != b.size) {
-            return size > b.size;
+            return size > b.size;   // sort by size, descending
         } else if (alloc != b.alloc) {
-            return alloc < b.alloc;
+            return alloc < b.alloc; // sort by allocation time, ascending
         } else {
-            return free < b.free;
+            return free < b.free;   // sort by free time, ascending
         }
     }
 };
@@ -985,6 +997,7 @@ bool GreedyAllocator::mergeable(MemoryAddress m1, MemoryAddress m2) {
     return !(m1.second < m2.first || m2.second < m1.first);
 }
 
+/// A sweep-line algorithm to populate the `up_tensors` and `down_tensors` maps
 void GreedyAllocator::build_topology() {
     vector<vector<shared_ptr<Tensor>>> allocated_tensors_each_timestamp, freed_tensors_each_timestamp;
     sort(infos.begin(), infos.end(), [this](shared_ptr<Tensor> p, shared_ptr<Tensor> q) {
@@ -1007,20 +1020,29 @@ void GreedyAllocator::build_topology() {
     }
     vector<pair<shared_ptr<Tensor>, MemoryAddress>> scan_line;
     for (int timestamp = 0; timestamp < allocated_tensors_each_timestamp.size(); timestamp++) {
+        // remove freed tensors
+        // scan_line therefore only contains active tensors
         for (auto t: freed_tensors_each_timestamp[timestamp]) {
             auto pos = find(scan_line.begin(), scan_line.end(), make_pair(t, tensor2address[t]));
             scan_line.erase(pos);
         }
+
+        // insert tensors scheduled to be allocated in `timestamp`
         for (auto t: allocated_tensors_each_timestamp[timestamp]) {
+            // find the correct position (binary search) to insert `t` into
+            // scale_line; sorted by memory address in ascending order
             auto pos = lower_bound(scan_line.begin(), scan_line.end(), make_pair(t, tensor2address[t]),
                                    [](pair<shared_ptr<Tensor>, MemoryAddress> p, pair<shared_ptr<Tensor>, MemoryAddress> q) {
                                        return p.second < q.second;
                                    }) - scan_line.begin();
             scan_line.insert(pos + scan_line.begin(), make_pair(t, tensor2address[t]));
+
+            // tensor at +1 is above `t` and `t` is below it
             if (pos + 1 < scan_line.size()) {
                 up_tensors[t].push_back(scan_line[pos + 1].first);
                 down_tensors[scan_line[pos + 1].first].push_back(t);
             }
+            // tensor at -1 is below `t` and `t` is above it
             if (pos - 1 >= 0) {
                 up_tensors[scan_line[pos - 1].first].push_back(t);
                 down_tensors[t].push_back(scan_line[pos - 1].first);
@@ -1029,14 +1051,51 @@ void GreedyAllocator::build_topology() {
     }
 }
 
+void GreedyAllocator::check_topology() {
+    // map<shared_ptr<Tensor>, vector<shared_ptr<Tensor>>> up_tensors, down_tensors;
+
+    // if B is above A, make sure A is in B's down list
+    for (auto const& a: up_tensors) {
+        auto t_a = a.first;
+        auto tensors_above_a = a.second;
+        for (auto const& t_b: tensors_above_a) {
+            auto tensors_below_b = down_tensors[t_b];
+            if (find(tensors_below_b.begin(), tensors_below_b.end(), t_a) == tensors_below_b.end()) {
+                debug_print("!!!!!!!! invalid toplogy: %s is above %s, but %s is not in %s's down list",
+                        t_b->id.c_str(), t_a->id.c_str(), t_a->id.c_str(), t_b->id.c_str());
+            }
+        }
+    }
+
+    for (auto const& a: down_tensors) {
+        auto t_a = a.first;
+        auto tensors_below_a = a.second;
+        for (auto const& t_b: tensors_below_a) {
+            auto tensors_above_b = up_tensors[t_b];
+            if (find(tensors_above_b.begin(), tensors_above_b.end(), t_a) == tensors_above_b.end()) {
+                debug_print("!!!!!!!! invalid toplogy: %s is below %s, but %s is not in %s's above list",
+                        t_b->id.c_str(), t_a->id.c_str(), t_a->id.c_str(), t_b->id.c_str());
+            }
+        }
+    }
+}
+
 void GreedyAllocator::remove_tensor(string tid, int timestamp) {
-    // find the tensors upper to the remoced tensor
+    // remove the tensor `tid` from the memory allocation plan at `timestamp`
+    //
+    // The removal triggers a cascade of adjustments of the memory layout:
+    // tensors that were "above" the removed tensor can now "sink" into the
+    // freed space. This function recalculated the positions of these affected
+    // tensors.
+
+    // find the tensors upper to the removed tensor
     auto tensor = id2tensor[tid];
     map<shared_ptr<Tensor>, bool> visited;
     queue<shared_ptr<Tensor>> que;
     vector<shared_ptr<Tensor>> influenced_tensors;
     que.push(tensor);
     visited[tensor] = true;
+    // BFS search
     while (!que.empty()) {
         auto top = que.front();
         que.pop();
@@ -1173,17 +1232,47 @@ size_t GreedyAllocator::current_size(int timestamp) {
 }
 
 void GreedyAllocator::heuristic_alloc() {
+    // The loading logic fully expanded is as follows:
+    //
+    // void load_logic() {
+    //     // load_info
+    //     if noRecompute {
+    //         infos <- data/heu_info/<model>/<model>.<batch>.heu_info.txt
+    //     } else {
+    //         infos <- data/heu_info/<model>/<model>.<batch>.<budget>.heu_info.txt
+    //     }
+    //
+    //     if infos != empty: return;
+    //
+    //     // load_info_via_exe_seq
+    //     if  noRecompute {
+    //         heuristic/execution/<model>/<model>.execution.txt -> data/heu_info/<model>/<model>.<batch>.heu_info.txt
+    //         infos <- data/heu_info/<model>/<model>.<batch>.heu_info.txt
+    //     } else {
+    //         heuristic/execution/<model>/<model>.<batch>.<budget>.execution.txt -> data/heu_info/<model>/<model>.<batch>.<budget>.heu_info.txt
+    //         infos <- data/heu_info/<model>/<model>.<batch>.heu_info.txt
+    //     }
+    //     return;
+    // }
     if (infos.empty()) {
         if (!load_info()) {
             load_info_via_exe_seq();
         }
     }
+
     if (infos.empty()) {
         debug_print("%s: error to heuristic_alloc via empty infos\n", __FUNCTION__)
         return;
     }
     debug_print("%s: %lu infos\n", __FUNCTION__, infos.size())
+
+    // sort the infos based on the definition of `operator<` for `GreedyAllocator::Tensor`
+    // which has the following logic:
+    //  1. Longest lifetime first
+    //  2. Largest size first
+    //  3. Tie-breaker: earlest alloc first or earlest free first
     sort(infos.begin(), infos.end());
+
     debug_print("infos.size = %lu\n", infos.size())
     for (int i = 0; i < infos.size(); i++) {
         debug_print("info[%d] = {id(%s), alloc(%d), free(%d), size(%zu)}\n", i, infos[i]->id.c_str(), infos[i]->alloc, infos[i]->free, infos[i]->size)
@@ -1293,5 +1382,3 @@ void GreedyAllocator::dump_heuristic_result() {
     }
     ofs.close();
 }
-
-

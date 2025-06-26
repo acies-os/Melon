@@ -195,6 +195,8 @@ public:
 
     void allocate(string tid);
 
+    void check_topology();
+
     shared_ptr<Profiler> profiler = nullptr;
     size_t budget_mb;
     map<shared_ptr<Tensor>, MemoryAddress> tensor2address;
@@ -229,13 +231,20 @@ public:
         debug_print("finish load info with io_info.size = %lu\n", profiler->io_info.size())
         shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, noRecompute);
 
-        // NOTE: added by us
-        if (!noRecompute) {
-            grd_allocator->heuristic_alloc();
+        grd_allocator->heuristic_alloc();
+        if (noRecompute) {
+            return 0;
         }
 
+        grd_allocator->build_topology();
+        grd_allocator->check_topology();
+
         shared_ptr<Recomputer> recomputer = make_shared<Recomputer>(profiler, grd_allocator, mem_bgt);
+        auto debug_infos_size = recomputer->grd_allocator->infos.size();
         recomputer->memory_calibrated_progressive_recomputation();
+
+        debug_print("noRecompute=%d\n", noRecompute);
+        return 0;
     }
 };
 
