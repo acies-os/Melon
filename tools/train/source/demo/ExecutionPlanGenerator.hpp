@@ -229,21 +229,23 @@ public:
         debug_print("model=%s, batch=%d, budget=%d\n", modelname.c_str(), batchsize, mem_bgt)
         shared_ptr<Profiler> profiler = make_shared<Profiler>(modelname, batchsize);
         debug_print("finish load info with io_info.size = %lu\n", profiler->io_info.size())
-        shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, noRecompute);
+
+        // NOTE(jinyang): This might have to to be "true" instead of noRecompute
+        shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, true);
 
         grd_allocator->heuristic_alloc();
-        if (noRecompute) {
-            return 0;
-        }
-
         grd_allocator->build_topology();
         grd_allocator->check_topology();
 
         shared_ptr<Recomputer> recomputer = make_shared<Recomputer>(profiler, grd_allocator, mem_bgt);
         auto debug_infos_size = recomputer->grd_allocator->infos.size();
+
+        // NOTE(jinyang): the first time we run this, it will generate the
+        // heuristic/execution/<model>/<model>.<batch>.<budget>.execution.txt
+        // files
         recomputer->memory_calibrated_progressive_recomputation();
 
-        debug_print("noRecompute=%d\n", noRecompute);
+        // debug_print("noRecompute=%d\n", noRecompute);
         return 0;
     }
 };
