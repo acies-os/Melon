@@ -230,7 +230,9 @@ public:
         shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, noRecompute);
 
         // NOTE: added by us
-        // grd_allocator->heuristic_alloc();
+        if (!noRecompute) {
+            grd_allocator->heuristic_alloc();
+        }
 
         shared_ptr<Recomputer> recomputer = make_shared<Recomputer>(profiler, grd_allocator, mem_bgt);
         recomputer->memory_calibrated_progressive_recomputation();
