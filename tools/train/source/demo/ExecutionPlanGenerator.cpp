@@ -1012,41 +1012,71 @@ void GreedyAllocator::build_topology() {
     }
     allocated_tensors_each_timestamp.clear();
     freed_tensors_each_timestamp.clear();
-    allocated_tensors_each_timestamp.resize(max_time);
-    freed_tensors_each_timestamp.resize(max_time);
+    allocated_tensors_each_timestamp.resize(max_time + 1);
+    freed_tensors_each_timestamp.resize(max_time + 1);
     for (auto t: infos) {
         allocated_tensors_each_timestamp[t->alloc].push_back(t);
         freed_tensors_each_timestamp[t->free].push_back(t);
     }
     vector<pair<shared_ptr<Tensor>, MemoryAddress>> scan_line;
-    for (int timestamp = 0; timestamp < allocated_tensors_each_timestamp.size(); timestamp++) {
+    for (int timestamp = 0; timestamp <= max_time; timestamp++) {
         // remove freed tensors
         // scan_line therefore only contains active tensors
         for (auto t: freed_tensors_each_timestamp[timestamp]) {
-            auto pos = find(scan_line.begin(), scan_line.end(), make_pair(t, tensor2address[t]));
-            scan_line.erase(pos);
+            auto it = find_if(scan_line.begin(), scan_line.end(),
+                              [&](const pair<shared_ptr<Tensor>, MemoryAddress>& p){ return p.first == t; });
+            if (it == scan_line.end()) {
+                continue;
+            }
+
+            auto pos = distance(scan_line.begin(), it);
+            shared_ptr<Tensor> prev_t = (pos > 0) ? scan_line[pos-1].first : nullptr;
+            shared_ptr<Tensor> next_t = (pos + 1 < scan_line.size()) ? scan_line[pos+1].first : nullptr;
+
+            if (prev_t) {
+                auto& up_list = up_tensors[prev_t];
+                up_list.erase(remove(up_list.begin(), up_list.end(), t), up_list.end());
+            }
+            if (next_t) {
+                auto& down_list = down_tensors[next_t];
+                down_list.erase(remove(down_list.begin(), down_list.end(), t), down_list.end());
+            }
+
+            if (prev_t && next_t) {
+                up_tensors[prev_t].push_back(next_t);
+                down_tensors[next_t].push_back(prev_t);
+            }
+            scan_line.erase(it);
         }
 
         // insert tensors scheduled to be allocated in `timestamp`
         for (auto t: allocated_tensors_each_timestamp[timestamp]) {
             // find the correct position (binary search) to insert `t` into
             // scale_line; sorted by memory address in ascending order
-            auto pos = lower_bound(scan_line.begin(), scan_line.end(), make_pair(t, tensor2address[t]),
-                                   [](pair<shared_ptr<Tensor>, MemoryAddress> p, pair<shared_ptr<Tensor>, MemoryAddress> q) {
-                                       return p.second < q.second;
-                                   }) - scan_line.begin();
-            scan_line.insert(pos + scan_line.begin(), make_pair(t, tensor2address[t]));
+            auto it_pos = lower_bound(scan_line.begin(), scan_line.end(), make_pair(t, tensor2address[t]),
+                                   [](const pair<shared_ptr<Tensor>, MemoryAddress>& p, const pair<shared_ptr<Tensor>, MemoryAddress>& q) { return p.second < q.second; });
+            auto pos = distance(scan_line.begin(), it_pos);
 
-            // tensor at +1 is above `t` and `t` is below it
-            if (pos + 1 < scan_line.size()) {
-                up_tensors[t].push_back(scan_line[pos + 1].first);
-                down_tensors[scan_line[pos + 1].first].push_back(t);
+            shared_ptr<Tensor> prev_t = (pos > 0) ? scan_line[pos-1].first : nullptr;
+            shared_ptr<Tensor> next_t = (pos < scan_line.size()) ? scan_line[pos].first : nullptr;
+
+            if (prev_t && next_t) {
+                auto& up_list = up_tensors[prev_t];
+                up_list.erase(remove(up_list.begin(), up_list.end(), next_t), up_list.end());
+                auto& down_list = down_tensors[next_t];
+                down_list.erase(remove(down_list.begin(), down_list.end(), prev_t), down_list.end());
             }
-            // tensor at -1 is below `t` and `t` is above it
-            if (pos - 1 >= 0) {
-                up_tensors[scan_line[pos - 1].first].push_back(t);
-                down_tensors[t].push_back(scan_line[pos - 1].first);
+
+            if (prev_t) {
+                up_tensors[prev_t].push_back(t);
+                down_tensors[t].push_back(prev_t);
             }
+            if (next_t) {
+                up_tensors[t].push_back(next_t);
+                down_tensors[next_t].push_back(t);
+            }
+
+            scan_line.insert(it_pos, make_pair(t, tensor2address[t]));
         }
     }
 }
@@ -1186,15 +1216,58 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     remained_tensors.push_back(tensor_left_part);
 
     // rebuild the topology of graph
-    for (auto t: down_tensors[tensor]) {
-        up_tensors[t].erase(find(up_tensors[t].begin(), up_tensors[t].end(), tensor));
+    // First, connect the neighbors of the tensor being removed.
+    auto down_neighbors = down_tensors[tensor];
+    auto up_neighbors = up_tensors[tensor];
+    for (auto& t_down : down_neighbors) {
+        for (auto& t_up : up_neighbors) {
+            if (overlap(t_down, t_up)) {
+                // Safely add t_up to t_down's up-list.
+                auto it_down = up_tensors.find(t_down);
+                if (it_down != up_tensors.end()) {
+                    auto& up_list = it_down->second;
+                    if (find(up_list.begin(), up_list.end(), t_up) == up_list.end()) {
+                        up_list.push_back(t_up);
+                    }
+                }
+
+                // Safely add t_down to t_up's down-list.
+                auto it_up = down_tensors.find(t_up);
+                if (it_up != down_tensors.end()) {
+                    auto& down_list = it_up->second;
+                    if (find(down_list.begin(), down_list.end(), t_down) == down_list.end()) {
+                        down_list.push_back(t_down);
+                    }
+                }
+            }
+        }
+    }
+
+    // Now, safely detach the tensor itself.
+    for (auto t: down_neighbors) {
+        auto it = up_tensors.find(t);
+        if (it != up_tensors.end()) {
+            auto& up_list = it->second;
+            up_list.erase(remove(up_list.begin(), up_list.end(), tensor), up_list.end());
+        }
+    }
+    for (auto t: up_neighbors) {
+        auto it = down_tensors.find(t);
+        if (it != down_tensors.end()) {
+            auto& down_list = it->second;
+            down_list.erase(remove(down_list.begin(), down_list.end(), tensor), down_list.end());
+        }
     }
     down_tensors.erase(tensor);
     up_tensors.erase(tensor);  //
     // removed tensor's id now points to the left part of the tensor, update all infomation
-    id2tensor[tensor->id] = tensor_left_part;
-    infos.erase(find(infos.begin(), infos.end(), tensor));
+    auto it = std::find_if(infos.begin(), infos.end(), 
+                           [&](const shared_ptr<Tensor>& p){ return p->id == tensor->id; });
+    if (it != infos.end()) {
+        infos.erase(it);
+    }
     infos.push_back(tensor_left_part);
+    id2tensor[tensor->id] = tensor_left_part;
     // remove the remained tensors from the allocated tensors, because their address need to be updated
     for (auto t: remained_tensors) {
         tensor2address.erase(t);
