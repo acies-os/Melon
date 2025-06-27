@@ -1081,6 +1081,7 @@ void GreedyAllocator::check_topology() {
 }
 
 void GreedyAllocator::remove_tensor(string tid, int timestamp) {
+    // (Jinyang)
     // remove the tensor `tid` from the memory allocation plan at `timestamp`
     //
     // The removal triggers a cascade of adjustments of the memory layout:
@@ -1095,7 +1096,9 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     vector<shared_ptr<Tensor>> influenced_tensors;
     que.push(tensor);
     visited[tensor] = true;
-    // BFS search
+    // (Jinyang)
+    // tensors above `tensor` are "influenced" (affected)
+    // find them through BFS search
     while (!que.empty()) {
         auto top = que.front();
         que.pop();
@@ -1109,7 +1112,24 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     }
     // the tensors that are above it can sink down, remove current tensor and not iter++
     vector<shared_ptr<Tensor>> remained_tensors;
+
+    // (Jinyang)
+    // a segment tree is used to store the highest address that the tensors
+    // above `tensor` can sink within `tensor`'s lifetime
+    //
+    // this is a max segment tree (greater<size_t>):
+    //
+    // array = [-inf, -inf, -inf, ..., -inf]
+    //          ^tensor->alloc         ^tensor->free
     SegmentTree<size_t, greater<size_t>> segmentTree(tensor->alloc, tensor->free);
+
+    // (Jinyang)
+    // tensor2address[tensor] returns a MemoryAddress which is pair: [start, end)
+    // So current_top is the starting mem addr of the removed tensor, i.e., the
+    // floor tensors above should sink to
+    //
+    // [current_top, current_top, ..., current_top]
+    //  ^alloc                         ^free
     size_t current_top = tensor2address[tensor].first;
     for (int i = tensor->alloc; i < tensor->free; i++) {
         segmentTree.insert(i, current_top);
@@ -1117,6 +1137,11 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     for (auto t: influenced_tensors) {
         // influenced tensor is order by the position  relative to removed tensor, [0] is the downmost one
         if (t->alloc >= tensor->alloc && t->free <= tensor->free) {
+            // (Jinyang)
+            // this is the easy case:
+            // t's lifetime is entirely contained within tensor's lifetime
+            // if tensor is removed, t can sink down during its lifetime
+
             // naive sink down is not okay
 //            tensor2address[t].first -= tensor->size;
 //            tensor2address[t].second -= tensor->size;
@@ -1126,12 +1151,22 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
             tensor2address[t].second = current_top + t->size;
             segmentTree.insert(make_pair(t->alloc, t->free -1), current_top + t->size);
         } else {
+            // (Jinyang)
+            // this is the more tricky case:
+            // there is overlap between t's and tensor's lifetime, but not
+            // fully, and we will re-allocate them later
             remained_tensors.push_back(t);
         }
     }
+    // (Jinyang)
+    // We are not deleteing the entire `tensor`, only [timestamp, tensor->free).
+    // We keep [tensor->alloc, timestamp) as a new tensor_left_part which will
+    // be allocated later
+
     // the left part (splitted at `timestamp`) remains
     auto tensor_left_part = make_shared<Tensor>(tensor->id, tensor->alloc, timestamp, tensor->size);
     remained_tensors.push_back(tensor_left_part);
+
     // rebuild the topology of graph
     for (auto t: down_tensors[tensor]) {
         up_tensors[t].erase(find(up_tensors[t].begin(), up_tensors[t].end(), tensor));
@@ -1152,10 +1187,15 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     for (auto t: remained_tensors) {
         // cannot use `get_best_address` because iter iterates tensor2address, which points to a pair not a Tensor
         vector<MemoryAddress> madd;
+
+        // (Jinyang)
+        // We are trying to alloc t. This for loop checks if its lifetime
+        // overlaps with any allocated tensors
         for (auto iter: tensor2address) {
             if (overlap(t, iter.first)) { // the lifetime
                 auto pos = lower_bound(madd.begin(), madd.end(), iter.second) - madd.begin();
                 if (pos != 0 && mergeable(madd[pos - 1], iter.second)) {
+                    // (Jinyang) mergeable: overlap or adjacent
                     madd[pos - 1].first = min(madd[pos - 1].first, iter.second.first);
                     madd[pos - 1].second = max(madd[pos - 1].second, iter.second.second);
                     pos--;
@@ -1173,15 +1213,24 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
             madd.emplace_back(0, 0);
         }
         MemoryAddress best(-1, -1);
+        // (Jinyang)
+        // Handle case where the best spot is the bottom of the address space
+        // madd[0] is the first occupied block and madd[0].first is its starting address
         if (madd[0].first >= t->size && (best.first == -1 || madd[0].first < best.second - best.first)) {
             best = MemoryAddress(0, madd[0].first);
         }
+
+        // (Jinyang)
+        // Find the best-fit gap: smallest large-enough gap that fits t
         for (int iter = 0; iter + 1 < madd.size(); iter++) {
             if (madd[iter + 1].first - madd[iter].second >= t->size &&
                 (best.first == -1 || madd[iter + 1].first - madd[iter].second < best.second - best.first)) {
                 best = MemoryAddress(madd[iter].second, madd[iter + 1].first);
             }
         }
+
+        // (Jinyang)
+        // No gap was found and we need to alloc t at the top of the pool
         if (best.first == -1) {
             best = MemoryAddress(madd[madd.size() - 1].second, numeric_limits<size_t>::max());
         }

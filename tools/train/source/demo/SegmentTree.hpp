@@ -41,6 +41,8 @@ struct SegmentTree<T, F>::Node {
 
     Node() {
         left = right = -1;
+        // if F = std::less, less<T>()(0, 1) => 0 < 1 => true => min seg tree
+        // if F = std::greater => max seg tree
         if (F()(0, 1)) {
             targetValue = numeric_limits<T>::max();
         } else {
