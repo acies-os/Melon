@@ -1094,8 +1094,21 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     map<shared_ptr<Tensor>, bool> visited;
     queue<shared_ptr<Tensor>> que;
     vector<shared_ptr<Tensor>> influenced_tensors;
-    que.push(tensor);
-    visited[tensor] = true;
+
+    // (Jinyang)
+    // Below code is bugged: it put the tensor to be removed in the
+    // influenced_tensors.
+    //
+    // que.push(tensor);
+    // visited[tensor] = true;
+    //
+    // This is replaced by the following code:
+    for (auto t: up_tensors[tensor]) {
+        if (!visited[t]) {
+            visited[t] = true;
+            que.push(t);
+        }
+    }
     // (Jinyang)
     // tensors above `tensor` are "influenced" (affected)
     // find them through BFS search
@@ -1134,6 +1147,11 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     for (int i = tensor->alloc; i < tensor->free; i++) {
         segmentTree.insert(i, current_top);
     }
+
+    // (Jinyang)
+    // remove the tensor
+    tensor2address.erase(tensor);
+
     for (auto t: influenced_tensors) {
         // influenced tensor is order by the position  relative to removed tensor, [0] is the downmost one
         if (t->alloc >= tensor->alloc && t->free <= tensor->free) {
