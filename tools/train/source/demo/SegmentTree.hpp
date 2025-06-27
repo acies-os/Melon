@@ -22,7 +22,7 @@ class SegmentTree {
 public:
     SegmentTree(int left, int right);
     void insert(int pos, T k, int index=0);
-    void insert(pair<int, int> p, T k, int index=0, bool updateParent=true);
+    void insert(pair<int, int> p, T k, int index=0);
     T query(int left, int right, int index=0);
     void show();
 private:
@@ -30,6 +30,7 @@ private:
     vector<shared_ptr<Node>> tree;
     int initialize(int left, int right, int index=0);
     void updateNode(T k, int index);
+    void push(int index);
 };
 
 template<class T, class F>
@@ -45,14 +46,20 @@ struct SegmentTree<T, F>::Node {
     int right;
     T targetValue;
 
+    // (Jinyang)
+    // Pending update value used for lazy propagation in range updates.
+    T lazy;
+
     Node() {
         left = right = -1;
         // if F = std::less, less<T>()(0, 1) => 0 < 1 => true => min seg tree
         // if F = std::greater => max seg tree
         if (F()(0, 1)) {
             targetValue = numeric_limits<T>::max();
+            lazy = numeric_limits<T>::max();
         } else {
             targetValue = numeric_limits<T>::min();
+            lazy = numeric_limits<T>::min();
         }
     }
 };
@@ -117,57 +124,137 @@ template<class T, class F>
 void SegmentTree<T, F>::insert(int pos, T k, int index) {
     int mid = (tree[index]->left + tree[index]->right) >> 1;
     // (Jinyang)
-    // leaf node;
+    // Base case: leaf node.
     // assert left == right == pos
     // insert the value k here
     if (tree[index]->left == tree[index]->right) {
         tree[index]->targetValue = k;
         return;
     }
-    if (F()(k, tree[index]->targetValue)) {
-        tree[index]->targetValue = k;
-    }
+
+    // if (F()(k, tree[index]->targetValue)) {
+    //     tree[index]->targetValue = k;
+    // }
+    // if (pos <= mid) {
+    //     insert(pos, k, (index << 1) + 1);
+    // } else {
+    //     insert(pos, k, (index << 1) + 2);
+    // }
+
+    // (Jinyang)
+    // recursive step first
+    int left_child_index = (index << 1) + 1;
+    int right_child_index = (index << 1) + 2;
     if (pos <= mid) {
-        insert(pos, k, (index << 1) + 1);
+        insert(pos, k, left_child_index);
     } else {
-        insert(pos, k, (index << 1) + 2);
+        insert(pos, k, right_child_index);
+    }
+
+    // (Jinyang)
+    // Now we can update the value
+    T left_child_val = tree[left_child_index]->targetValue;
+    T right_child_val = tree[right_child_index]->targetValue;
+    if (F()(left_child_val, right_child_val)) {
+        tree[index]->targetValue = left_child_val;
+    } else {
+        tree[index]->targetValue = right_child_val;
+    }
+
+}
+
+template<class T, class F>
+void SegmentTree<T, F>::push(int index) {
+    // Check if there is a lazy value to propagate (using the sentinel)
+    bool has_pending = (F()(0, 1) && tree[index]->lazy != numeric_limits<T>::max()) ||
+                       (!F()(0, 1) && tree[index]->lazy != numeric_limits<T>::min());
+
+    if (has_pending && tree[index]->left != tree[index]->right) {
+        int left_child = (index << 1) + 1;
+        int right_child = (index << 1) + 2;
+
+        // Propagate the lazy value to children
+        tree[left_child]->lazy = tree[index]->lazy;
+        tree[right_child]->lazy = tree[index]->lazy;
+
+        // Update children's actual values
+        tree[left_child]->targetValue = tree[index]->lazy;
+        tree[right_child]->targetValue = tree[index]->lazy;
+
+        // Reset the parent's lazy value
+        if (F()(0, 1)) {
+             tree[index]->lazy = numeric_limits<T>::max();
+        } else {
+            tree[index]->lazy = numeric_limits<T>::min();
+        }
     }
 }
 
-
+// template<class T, class F>
+// void SegmentTree<T, F>::insert(pair<int, int> p, T k, int index, bool updateParent) {
+//     printf("begin insert: node=[%d, %d]\tsection=[%d, %d]\n", tree[index]->left, tree[index]->right, p.first, p.second);
+//     if (p.first > tree[index]->right || p.second <= tree[index]->left) {
+//         // no intersection, but this block is dead code.
+//         return;
+//     }
+//     if (tree[index]->left == p.first && tree[index]->right == p.second) {
+//         printf("update [%d, %d]\n", p.first, p.second);
+//         updateNode(k, index);
+//         return;
+//     }
+//     if (F()(k,  tree[index]->targetValue)) {
+//         tree[index]->targetValue = k;
+//     }
+//     p.first = max(p.first, tree[index]->left);
+//     p.second = min(p.second, tree[index]->right);
+//     int mid = (tree[index]->left + tree[index]->right) >> 1;
+//     printf("after intersection: node=[%d, %d]\tmid=%d\tsection=[%d, %d]\n", tree[index]->left, tree[index]->right, mid, p.first, p.second);
+//     if (mid < p.first) {
+//         insert(p, k, (index << 1) + 2, false);
+//     } else if (mid >= p.second) {
+//         insert(p, k, (index << 1) + 1, false);
+//     } else {
+//         insert(make_pair(p.first, mid), k, (index << 1) + 1, false);
+//         insert(make_pair(mid + 1, p.second), k, (index << 1) + 2, false);
+//     }
+//     while (index >= 0 && updateParent) {
+//         if (F()(tree[index]->targetValue, tree[index >> 1]->targetValue)) {
+//             tree[index >> 1]->targetValue = tree[index]->targetValue;
+//         } else {
+//             break;
+//         }
+//     }
+// }
 template<class T, class F>
-void SegmentTree<T, F>::insert(pair<int, int> p, T k, int index, bool updateParent) {
-    printf("begin insert: node=[%d, %d]\tsection=[%d, %d]\n", tree[index]->left, tree[index]->right, p.first, p.second);
-    if (p.first > tree[index]->right || p.second <= tree[index]->left) {
-        // no intersection, but this block is dead code.
-        return;
-    }
-    if (tree[index]->left == p.first && tree[index]->right == p.second) {
-        printf("update [%d, %d]\n", p.first, p.second);
-        updateNode(k, index);
-        return;
-    }
-    if (F()(k,  tree[index]->targetValue)) {
+void SegmentTree<T, F>::insert(pair<int, int> p, T k, int index) {
+    // Propagate pending (lazy) updates
+    push(index);
+
+    printf("begin insert: node=[%d, %d]\tsection=[%d, %d]\n",
+        tree[index]->left, tree[index]->right, p.first, p.second);
+    // Case 1: total overlap. Apply lazy tag and stop.
+    if (tree[index]->left >= p.first && tree[index]->right <= p.second) {
+        tree[index]->lazy = k;
         tree[index]->targetValue = k;
+        return;
     }
-    p.first = max(p.first, tree[index]->left);
-    p.second = min(p.second, tree[index]->right);
-    int mid = (tree[index]->left + tree[index]->right) >> 1;
-    printf("after intersection: node=[%d, %d]\tmid=%d\tsection=[%d, %d]\n", tree[index]->left, tree[index]->right, mid, p.first, p.second);
-    if (mid < p.first) {
-        insert(p, k, (index << 1) + 2, false);
-    } else if (mid >= p.second) {
-        insert(p, k, (index << 1) + 1, false);
+
+    // Case 2: No overlap. Do nothing.
+    if (tree[index]->left > p.second || tree[index]->right < p.first) {
+        return;
+    }
+
+    // Case 3: Partial overlap. Recurse on children.
+    insert(p, k, (index << 1) + 1);
+    insert(p, k, (index << 1) + 2);
+
+    // After recursion, update this node's value from its children
+    T left_val = tree[(index << 1) + 1]->targetValue;
+    T right_val = tree[(index << 1) + 2]->targetValue;
+    if (F()(left_val, right_val)) {
+        tree[index]->targetValue = left_val;
     } else {
-        insert(make_pair(p.first, mid), k, (index << 1) + 1, false);
-        insert(make_pair(mid + 1, p.second), k, (index << 1) + 2, false);
-    }
-    while (index >= 0 && updateParent) {
-        if (F()(tree[index]->targetValue, tree[index >> 1]->targetValue)) {
-            tree[index >> 1]->targetValue = tree[index]->targetValue;
-        } else {
-            break;
-        }
+        tree[index]->targetValue = right_val;
     }
 }
 
@@ -191,8 +278,19 @@ T SegmentTree<T, F>::query(int left, int right, int index) {
             return numeric_limits<T>::min();
         }
     } else if (tree[index]->left >= left && tree[index]->right <= right) {
+        // (Jinyang)
+        // left <= node_left < node_right <= right
+        // no need to go deeper
         return tree[index]->targetValue;
     } else {
+        // (Jinyang)
+        // Propagate pending (lazy) updates
+        push(index);
+
+        // (Jinyang)
+        // We don't need to calculate a mid index and query the left child and
+        // right child differently. The previous else-if branch can already
+        // handle cases that match and stop at internal nodes
         T l = query(left, right, (index << 1) + 1);
         T r = query(left, right, (index << 1) + 2);
         if (F()(l, r)) return l;
