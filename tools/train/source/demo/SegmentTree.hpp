@@ -32,9 +32,15 @@ private:
     void updateNode(T k, int index);
 };
 
-// ---------------- template methods from old SegmentTree.cpp ----------------
 template<class T, class F>
 struct SegmentTree<T, F>::Node {
+    // (Jinyang)
+    // In a Segment Tree, each node has a range [left, right]. The left and
+    // right here denote the range and these are not the children. The left
+    // child and right child are acccessed by indexing. Suppose the current
+    // node's index is i:
+    //     left child: 2 * i + 1
+    //     right child: 2 * i + 2
     int left;
     int right;
     T targetValue;
@@ -56,29 +62,64 @@ SegmentTree<T, F>::SegmentTree(int left, int right) {
     if (left > right) {
         return;
     }
+    // (Jinyang)
+    // "<< 2" == "* 4"
+    // A property of Segment Tree is that they need 4*n (at most) to work with an
+    // array of size n
     tree.resize((right - left + 1) << 2);
     for (int i = 0; i < tree.size(); ++i) {
         tree[i] = make_shared<Node>();
     }
+
+    // (Jinyang)
+    // the initialize() function will return the largest index used; +1 will be
+    // the size. Note that due to the indexing scheme (left: 2*i+1; right:
+    // 2*i+2), there will be unused indicies. This last resize simply trims off
+    // unused slots at the *end* of the vec, but does not eliminates the holes
+    // in the vec.
     tree.resize(initialize(left, right) + 1);
 }
 
+// (Jinyang)
+// this only set up the range for each node; it does NOT populate the values
 template<class T, class F>
 int SegmentTree<T, F>::initialize(int left, int right, int index) {
+    // (Jinyang)
+    // set the node's range to [left, right], inclusive
     tree[index]->left = left;
     tree[index]->right = right;
+
+    // (Jinyang)
+    // leaf node; stop recursion
     if (left == right) {
         return index;
     }
+
+    // (Jinyang)
+    // If not leaf node, it's an internal node.
+    // The mid point will be (l+r)/2
+    // left child:
+    //    range: [l, mid]
+    //    index: 2*i+1
+    // right child:
+    //    range: [mid+1, r]
+    //    index: 2*i+2
     int mid = (left + right) >> 1;
     int l = initialize(left, mid, (index << 1) + 1);
     int r = initialize(mid + 1, right, (index << 1) + 2);
+
+    // (Jinyang)
+    // return the largest index in the tree
     return max(l, r);
 }
 
 template<class T, class F>
 void SegmentTree<T, F>::insert(int pos, T k, int index) {
     int mid = (tree[index]->left + tree[index]->right) >> 1;
+    // (Jinyang)
+    // leaf node;
+    // assert left == right == pos
+    // insert the value k here
     if (tree[index]->left == tree[index]->right) {
         tree[index]->targetValue = k;
         return;
