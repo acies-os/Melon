@@ -523,7 +523,9 @@ void Profiler::dump_original_execution_info(string filename) {
 Recomputer::Recomputer(shared_ptr<Profiler> profiler_ptr, shared_ptr<GreedyAllocator> allocator_ptr, size_t budget, double thres)
         : profiler(profiler_ptr), grd_allocator(allocator_ptr), budget_mb(budget), threshold(thres) {
     vnl_allocator = VanillaAllocator();
+    // A set tracking which tensors are currently "in-memory"
     allocated_tensor.clear();
+    // A set of tensors that are candidates for being evicted and recomputed
     feature_map.clear();
     debug_print("mem_bgt = %zu, budget_mb = %zu\n", budget_b, budget_mb)
     for (int i = 0; i < profiler->io_info.size(); i++) {
@@ -532,11 +534,14 @@ Recomputer::Recomputer(shared_ptr<Profiler> profiler_ptr, shared_ptr<GreedyAlloc
             table_out[t].insert(to_string(i));
         }
     }
+    // info.release contains the IDs of tensors that are obsolete at current step.
+    // The map release_point is a map[k, v] that tensor k should be release at tensor v
     for (auto &info: profiler_ptr->io_info) {
         for (auto t: info.release) {
             release_point[t] = info.opid;
         }
     }
+    // Tensors that are never explicitly released will be released at the final step
     for (int i = 0; i < profiler->io_info.size(); i++) {
         if (release_point.find(to_string(i)) == release_point.end()) {
             release_point[to_string(i)] = to_string(profiler->io_info.size());
@@ -1000,6 +1005,8 @@ bool GreedyAllocator::mergeable(MemoryAddress m1, MemoryAddress m2) {
 /// A sweep-line algorithm to populate the `up_tensors` and `down_tensors` maps
 void GreedyAllocator::build_topology() {
     vector<vector<shared_ptr<Tensor>>> allocated_tensors_each_timestamp, freed_tensors_each_timestamp;
+    // Sort by allocation time or address.
+    // Earlier allocation time or lower starting address comes first.
     sort(infos.begin(), infos.end(), [this](shared_ptr<Tensor> p, shared_ptr<Tensor> q) {
         if (p->alloc != q->alloc) {
             return p->alloc < q->alloc;
@@ -1018,30 +1025,42 @@ void GreedyAllocator::build_topology() {
         allocated_tensors_each_timestamp[t->alloc].push_back(t);
         freed_tensors_each_timestamp[t->free].push_back(t);
     }
+    // The scan_line is a vertical line in the time-address plane, representing
+    // "in-memory" at the current step.
     vector<pair<shared_ptr<Tensor>, MemoryAddress>> scan_line;
     for (int timestamp = 0; timestamp <= max_time; timestamp++) {
-        // remove freed tensors
+        // Remove freed tensors
         // scan_line therefore only contains active tensors
         for (auto t: freed_tensors_each_timestamp[timestamp]) {
-            auto it = find_if(scan_line.begin(), scan_line.end(),
-                              [&](const pair<shared_ptr<Tensor>, MemoryAddress>& p){ return p.first == t; });
+            // find t in the scan_line
+            auto it =
+                find_if(scan_line.begin(), scan_line.end(),
+                        [&](const pair<shared_ptr<Tensor>, MemoryAddress> &p) {
+                          return p.first == t;
+                        });
             if (it == scan_line.end()) {
                 continue;
             }
-
             auto pos = distance(scan_line.begin(), it);
+
+            // prev_t points to the tensor *below* t
             shared_ptr<Tensor> prev_t = (pos > 0) ? scan_line[pos-1].first : nullptr;
+
+            // next_t points to the tensor *above* t
             shared_ptr<Tensor> next_t = (pos + 1 < scan_line.size()) ? scan_line[pos+1].first : nullptr;
 
+            // remove t from the up_list of the tensor below t
             if (prev_t) {
                 auto& up_list = up_tensors[prev_t];
                 up_list.erase(remove(up_list.begin(), up_list.end(), t), up_list.end());
             }
+            // remove t from the down_list of the tensor above t
             if (next_t) {
                 auto& down_list = down_tensors[next_t];
                 down_list.erase(remove(down_list.begin(), down_list.end(), t), down_list.end());
             }
 
+            // if t has tensors above and below it, connect them
             if (prev_t && next_t) {
                 up_tensors[prev_t].push_back(next_t);
                 down_tensors[next_t].push_back(prev_t);
@@ -1053,8 +1072,15 @@ void GreedyAllocator::build_topology() {
         for (auto t: allocated_tensors_each_timestamp[timestamp]) {
             // find the correct position (binary search) to insert `t` into
             // scale_line; sorted by memory address in ascending order
-            auto it_pos = lower_bound(scan_line.begin(), scan_line.end(), make_pair(t, tensor2address[t]),
-                                   [](const pair<shared_ptr<Tensor>, MemoryAddress>& p, const pair<shared_ptr<Tensor>, MemoryAddress>& q) { return p.second < q.second; });
+            auto it_pos = lower_bound(
+                scan_line.begin(), scan_line.end(),
+                make_pair(t, tensor2address[t]),
+                [](const pair<shared_ptr<Tensor>, MemoryAddress> &p,
+                   const pair<shared_ptr<Tensor>, MemoryAddress> &q) {
+                    // p is an element in scan_line
+                    // q is (t, address of t)
+                  return p.second < q.second;
+                });
             auto pos = distance(scan_line.begin(), it_pos);
 
             shared_ptr<Tensor> prev_t = (pos > 0) ? scan_line[pos-1].first : nullptr;
