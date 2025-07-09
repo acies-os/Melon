@@ -792,8 +792,15 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
     auto current_size = grd_allocator->current_size(calibrated_timestamp);
     while (grd_allocator->current_size(calibrated_timestamp) > budget_b) {
         string evict_t;
-        for (auto t: allocated_tensor) {
-            // `metric` is a member vairable (map<string, double>) that stores
+        const auto& inputs_vec = profiler->io_info[stoi(ith)].inputs;
+        const set<string> inputs(inputs_vec.begin(), inputs_vec.end());
+        vector<string> eviction_candidates;
+        // Per Melon, the input tensors of the current operator are not discardable.
+        set_difference(allocated_tensor.begin(), allocated_tensor.end(),
+                       inputs.begin(), inputs.end(),
+                       back_inserter(eviction_candidates));
+        for (auto t: eviction_candidates) {
+            // `metric` is a member variable (map<string, double>) that stores
             // the TPS score for each tensor
             update_metric(t);
             debug_print("metric_tps[%s]=%.3lf\n", t.c_str(), metric[t])
@@ -804,7 +811,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
             }
         }
         if (evict_t.empty()) {
-            debug_print("cannot evict any tensor because current allocated-tensor set is empty")
+            debug_print("cannot evict any tensor because current allocated-tensor set is empty or only contains inputs for the current op\n");
             break;
         }
         grd_allocator->remove_tensor(evict_t, calibrated_timestamp);
@@ -824,6 +831,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
     debug_print("exe_seq[%zu]=(%s, %s)\n", exe_seq.size() - 1, exe_seq[exe_seq.size() - 1].first.c_str(), exe_seq[exe_seq.size() - 1].second.c_str())
     for (auto t : profiler->io_info[stoi(ith)].release) {
         if (allocated_tensor.find(t) == allocated_tensor.end()) {
+            // TODO (Jinyang): Why this branch could happen?
             debug_print("%s: fuck %s\n", __FUNCTION__, t.c_str())
             MNN_ASSERT(false);
         } else {
@@ -900,6 +908,9 @@ struct GreedyAllocator::Tensor {
     size_t size;
 
     Tensor(string i = "", int a = -1, int f = -1, size_t s = 0) : id(i), free(f), alloc(a), size(s) {
+        if (free > 0 and alloc > 0) {
+            MNN_ASSERT(free > alloc);
+        }
         life = free - alloc;
     }
 
@@ -1322,16 +1333,29 @@ void GreedyAllocator::extend_pool(int timestamp, int length) {
 }
 
 void GreedyAllocator::insert_tensors(vector<string> tids, int timestamp) {
-    extend_pool(timestamp, tids.size());
-    for (int i = 0; i < tids.size(); ++i) {
-        auto original_tensor = id2originalTensor[tids[i]];
-        auto tensor = make_shared<Tensor>(tids[i] + RECOMPUTE_SUFFIX, timestamp + i, original_tensor->free + tids.size(), original_tensor->size);
-        id2tensor[tids[i]] = tensor;
-        MemoryAddress best = get_best_address(tensor, infos.begin(), infos.end());
-        tensor2address[tensor] = make_pair(best.first, best.first + tensor->size);
-    }
-}
+  extend_pool(timestamp, tids.size());
+  for (int i = 0; i < tids.size(); ++i) {
+    auto original_tensor = id2originalTensor[tids[i]];
+    int new_alloc_time = timestamp + i;
 
+    // A recomputed tensor is granted a new life of the same duration as its
+    // original one.
+    int new_free_time = new_alloc_time + original_tensor->life;
+
+    auto tensor =
+        make_shared<Tensor>(tids[i] + RECOMPUTE_SUFFIX, new_alloc_time,
+                            new_free_time, original_tensor->size);
+
+    // Find address before adding to infos, so it doesn't check against itself.
+    MemoryAddress best = get_best_address(tensor, infos.begin(), infos.end());
+    tensor2address[tensor] = make_pair(best.first, best.first + tensor->size);
+
+    // Add the new tensor to the plan, making it visible for subsequent
+    // operations.
+    infos.push_back(tensor);
+    id2tensor[tids[i]] = tensor; // Still use original ID for lookup
+  }
+}
 
 void GreedyAllocator::allocate(string tid) {
     if (tid.find(":") == string::npos) {
