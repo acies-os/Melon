@@ -1,4 +1,5 @@
 #include "ExecutionPlanGenerator.hpp"
+#include "MNN/MNNDefine.h"
 #include "SegmentTree.hpp"
 
 string RECOMPUTE_SUFFIX = "_recompute";
@@ -651,7 +652,10 @@ void Recomputer::update_metric(string ith) {
         comp_t += profiler->cost_info[src];
     }
 //    debug_print("%s.comp_t=%.3lf\n", ith.c_str(), comp_t)
+
+    // TODO: (Jinyang) use tensor life instead of release_point?
     metric[ith] = profiler->tensor_size[ith] * (stod(release_point[ith]) - stod(current_progress)) / comp_t;
+    MNN_ASSERT(metric[ith] > 0);
 //    debug_print("%d - %d = %.3lf --> %.3lf\n", stoi(release_point[ith]), stoi(current_progress), (stod(release_point[ith]) - stod(current_progress)), metric[ith]);
 //    metric[ith] = profiler->tensor_size[ith]  / comp_t;
 }
@@ -793,6 +797,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
             // the TPS score for each tensor
             update_metric(t);
             debug_print("metric_tps[%s]=%.3lf\n", t.c_str(), metric[t])
+            MNN_ASSERT(metric[t] > 0);
             // find the tensor with the highest score
             if (evict_t.empty() || metric[evict_t] < metric[t]) {
                 evict_t = t;
@@ -808,7 +813,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
         allocated_tensor.erase(evict_t);
     }
     // do NOT add resize-tensor to allocated-tensor because its cost is N/A
-    // during the recompute process, all tensor are considered equally but the reisze-tensor is only a tmp var
+    // during the recompute process, all tensor are considered equally but the resize-tensor is only a tmp var
     // it is only used to assist the computation of the other tensors, i.e., the output of each OP
     for (auto t : profiler->io_info[stoi(ith)].outputs) {
         grd_allocator->allocate(t);
@@ -820,6 +825,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
     for (auto t : profiler->io_info[stoi(ith)].release) {
         if (allocated_tensor.find(t) == allocated_tensor.end()) {
             debug_print("%s: fuck %s\n", __FUNCTION__, t.c_str())
+            MNN_ASSERT(false);
         } else {
             allocated_tensor.erase(t);
             exe_seq.emplace_back(recompute ? "re-release" : "release", t);
@@ -1063,7 +1069,7 @@ void GreedyAllocator::check_topology() {
         for (auto const& t_b: tensors_above_a) {
             auto tensors_below_b = down_tensors[t_b];
             if (find(tensors_below_b.begin(), tensors_below_b.end(), t_a) == tensors_below_b.end()) {
-                debug_print("!!!!!!!! invalid toplogy: %s is above %s, but %s is not in %s's down list",
+                debug_print("!!!!!!!! invalid toplogy: %s is above %s, but %s is not in %s's down list\n",
                         t_b->id.c_str(), t_a->id.c_str(), t_a->id.c_str(), t_b->id.c_str());
             }
         }
@@ -1075,7 +1081,7 @@ void GreedyAllocator::check_topology() {
         for (auto const& t_b: tensors_below_a) {
             auto tensors_above_b = up_tensors[t_b];
             if (find(tensors_above_b.begin(), tensors_above_b.end(), t_a) == tensors_above_b.end()) {
-                debug_print("!!!!!!!! invalid toplogy: %s is below %s, but %s is not in %s's above list",
+                debug_print("!!!!!!!! invalid toplogy: %s is below %s, but %s is not in %s's above list\n",
                         t_b->id.c_str(), t_a->id.c_str(), t_a->id.c_str(), t_b->id.c_str());
             }
         }
@@ -1155,7 +1161,7 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     tensor2address.erase(tensor);
 
     for (auto t: influenced_tensors) {
-        // influenced tensor is order by the position  relative to removed tensor, [0] is the downmost one
+        // influenced tensor is order by the position relative to removed tensor, [0] is the downmost one
         if (t->alloc >= tensor->alloc && t->free <= tensor->free) {
             // (Jinyang)
             // this is the easy case:
@@ -1179,11 +1185,11 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
         }
     }
     // (Jinyang)
-    // We are not deleteing the entire `tensor`, only [timestamp, tensor->free).
+    // We are not deleting the entire `tensor`, only [timestamp, tensor->free).
     // We keep [tensor->alloc, timestamp) as a new tensor_left_part which will
     // be allocated later
 
-    // the left part (splitted at `timestamp`) remains
+    // the left part (split at `timestamp`) remains
     auto tensor_left_part = make_shared<Tensor>(tensor->id, tensor->alloc, timestamp, tensor->size);
     remained_tensors.push_back(tensor_left_part);
 
@@ -1232,8 +1238,8 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     }
     down_tensors.erase(tensor);
     up_tensors.erase(tensor);  //
-    // removed tensor's id now points to the left part of the tensor, update all infomation
-    auto it = std::find_if(infos.begin(), infos.end(), 
+    // removed tensor's id now points to the left part of the tensor, update all information
+    auto it = std::find_if(infos.begin(), infos.end(),
                            [&](const shared_ptr<Tensor>& p){ return p->id == tensor->id; });
     if (it != infos.end()) {
         infos.erase(it);
@@ -1303,7 +1309,7 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
 
 
 void GreedyAllocator::extend_pool(int timestamp, int length) {
-    // [timestame, timestame + length)
+    // [timestamp, timestamp + length)
     for (auto t: infos) {
         if (timestamp <= t->alloc) {
             t->alloc += length;
@@ -1357,7 +1363,7 @@ void GreedyAllocator::heuristic_alloc() {
     //     if infos != empty: return;
     //
     //     // load_info_via_exe_seq
-    //     if  noRecompute {
+    //     if noRecompute {
     //         heuristic/execution/<model>/<model>.execution.txt -> data/heu_info/<model>/<model>.<batch>.heu_info.txt
     //         infos <- data/heu_info/<model>/<model>.<batch>.heu_info.txt
     //     } else {
