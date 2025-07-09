@@ -230,12 +230,17 @@ public:
         shared_ptr<Profiler> profiler = make_shared<Profiler>(modelname, batchsize);
         debug_print("finish load info with io_info.size = %lu\n", profiler->io_info.size())
 
-        // NOTE(jinyang): This might have to to be "true" instead of noRecompute
-        shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, true);
+        // First run: noRecompute=true
+        // Second run: noRecompute=false
+        shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, noRecompute);
 
         grd_allocator->heuristic_alloc();
         grd_allocator->build_topology();
         grd_allocator->check_topology();
+
+        if (!noRecompute) {
+            return 0;
+        }
 
         shared_ptr<Recomputer> recomputer = make_shared<Recomputer>(profiler, grd_allocator, mem_bgt);
         auto debug_infos_size = recomputer->grd_allocator->infos.size();
