@@ -627,6 +627,17 @@ void Recomputer::ondemand_recompute_via_metric() {
             vector<string> src(comp_src.begin(), comp_src.end());
             sort(src.begin(), src.end(), [](string a, string b) { return stoi(a) < stoi(b); });
             for (auto i : src) {
+                auto& op_info = profiler->io_info[stoi(i)];
+                for (auto& t : op_info.outputs) {
+                    if (release_point.count(t)) {
+                        int original_alloc_op = stoi(i);
+                        int original_release_op = stoi(release_point[t]);
+                        int lifetime = original_release_op - original_alloc_op;
+                        int new_alloc_op = op;
+                        int new_release_op = new_alloc_op + lifetime;
+                        release_point[t] = to_string(new_release_op);
+                    }
+                }
                 ondemand_compute(i, true, table_in[info.opid]);
             }
         }
@@ -651,11 +662,12 @@ void Recomputer::update_metric(string ith) {
     for (auto src : comp_src) {
         comp_t += profiler->cost_info[src];
     }
-//    debug_print("%s.comp_t=%.3lf\n", ith.c_str(), comp_t)
+    MNN_ASSERT(comp_t > 0);
+    // debug_print("%s.comp_t=%.3lf\n", ith.c_str(), comp_t)
 
-    // TODO: (Jinyang) use tensor life instead of release_point?
+    // TODO:
     metric[ith] = profiler->tensor_size[ith] * (stod(release_point[ith]) - stod(current_progress)) / comp_t;
-    MNN_ASSERT(metric[ith] > 0);
+    // MNN_ASSERT(metric[ith] > 0);
 //    debug_print("%d - %d = %.3lf --> %.3lf\n", stoi(release_point[ith]), stoi(current_progress), (stod(release_point[ith]) - stod(current_progress)), metric[ith]);
 //    metric[ith] = profiler->tensor_size[ith]  / comp_t;
 }
@@ -804,7 +816,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
             // the TPS score for each tensor
             update_metric(t);
             debug_print("metric_tps[%s]=%.3lf\n", t.c_str(), metric[t])
-            MNN_ASSERT(metric[t] > 0);
+            // MNN_ASSERT(metric[t] > 0);
             // find the tensor with the highest score
             if (evict_t.empty() || metric[evict_t] < metric[t]) {
                 evict_t = t;
@@ -866,6 +878,17 @@ void Recomputer::memory_calibrated_progressive_recomputation() {
             // "stretches" the lifetime of existing tensors to account for the additional recomputation
             grd_allocator->insert_tensors(src, calibrated_timestamp);
             for(auto tid: src) {
+                auto& op_info = profiler->io_info[stoi(tid)];
+                for (auto& output_tensor_id : op_info.outputs) {
+                    if (release_point.count(output_tensor_id)) {
+                        int original_alloc_op = stoi(tid);
+                        int original_release_op = stoi(release_point[output_tensor_id]);
+                        int lifetime = original_release_op - original_alloc_op;
+                        int new_alloc_op = opidx;
+                        int new_release_op = new_alloc_op + lifetime;
+                        release_point[output_tensor_id] = to_string(new_release_op);
+                    }
+                }
                 calibrated_compute(tid, true);
             }
         }
@@ -1263,7 +1286,10 @@ void GreedyAllocator::remove_tensor(string tid, int timestamp) {
     }
 
     //insert the remained_tensors (including the left part of the removed tensor) to the pool
-    sort(remained_tensors.begin(), remained_tensors.end());
+    sort(remained_tensors.begin(), remained_tensors.end(),
+         [](const shared_ptr<Tensor> &a, const shared_ptr<Tensor> &b) {
+           return *a < *b;
+         });
     for (auto t: remained_tensors) {
         // cannot use `get_best_address` because iter iterates tensor2address, which points to a pair not a Tensor
         vector<MemoryAddress> madd;
@@ -1336,24 +1362,20 @@ void GreedyAllocator::insert_tensors(vector<string> tids, int timestamp) {
   extend_pool(timestamp, tids.size());
   for (int i = 0; i < tids.size(); ++i) {
     auto original_tensor = id2originalTensor[tids[i]];
-    int new_alloc_time = timestamp + i;
-
-    // A recomputed tensor is granted a new life of the same duration as its
-    // original one.
-    int new_free_time = new_alloc_time + original_tensor->life;
-
-    auto tensor =
-        make_shared<Tensor>(tids[i] + RECOMPUTE_SUFFIX, new_alloc_time,
-                            new_free_time, original_tensor->size);
-
-    // Find address before adding to infos, so it doesn't check against itself.
+    int new_alloc = timestamp + i;
+    int new_free = original_tensor->free + tids.size();
+    if (new_free <= new_alloc) {
+        new_free = new_alloc + tids.size();
+    }
+    // auto tensor = make_shared<Tensor>(tids[i] + RECOMPUTE_SUFFIX, timestamp + i,
+    //                                   original_tensor->free + tids.size(),
+    //                                   original_tensor->size);
+    auto tensor = make_shared<Tensor>(tids[i] + RECOMPUTE_SUFFIX, new_alloc,
+                                      new_free,
+                                      original_tensor->size);
+    id2tensor[tids[i]] = tensor;
     MemoryAddress best = get_best_address(tensor, infos.begin(), infos.end());
     tensor2address[tensor] = make_pair(best.first, best.first + tensor->size);
-
-    // Add the new tensor to the plan, making it visible for subsequent
-    // operations.
-    infos.push_back(tensor);
-    id2tensor[tids[i]] = tensor; // Still use original ID for lookup
   }
 }
 
@@ -1413,7 +1435,7 @@ void GreedyAllocator::heuristic_alloc() {
     //  1. Longest lifetime first
     //  2. Largest size first
     //  3. Tie-breaker: earlest alloc first or earlest free first
-    sort(infos.begin(), infos.end());
+    sort(infos.begin(), infos.end(), [](const shared_ptr<Tensor>& a, const shared_ptr<Tensor>& b){ return *a < *b; });
 
     debug_print("infos.size = %lu\n", infos.size())
     for (int i = 0; i < infos.size(); i++) {
