@@ -230,8 +230,8 @@ void SegmentTree<T, F>::insert(pair<int, int> p, T k, int index) {
     // Propagate pending (lazy) updates
     push(index);
 
-    printf("begin insert: node=[%d, %d]\tsection=[%d, %d]\n",
-        tree[index]->left, tree[index]->right, p.first, p.second);
+    // printf("begin insert: node=[%d, %d]\tsection=[%d, %d]\n",
+    //    tree[index]->left, tree[index]->right, p.first, p.second);
     // Case 1: total overlap. Apply lazy tag and stop.
     if (tree[index]->left >= p.first && tree[index]->right <= p.second) {
         tree[index]->lazy = k;

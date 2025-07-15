@@ -16,7 +16,6 @@
 #include "DemoUnit.hpp"
 #include <MNN/expr/NN.hpp>
 #include "SGD.hpp"
-#include "MicroSGD.hpp"
 #define MNN_OPEN_TIME_TRACE
 #include <MNN/AutoTime.hpp>
 #include "ADAM.hpp"
@@ -32,9 +31,9 @@ using namespace MNN::Express;
 using namespace MNN::Train;
 
 void MobilenetV2Utils::train(std::shared_ptr<Module> model, const int numClasses, const int addToLabel,
-                            std::string trainImagesFolder, std::string trainImagesTxt,
-                            std::string testImagesFolder, std::string testImagesTxt,
-                            const int trainQuantDelayEpoch, const int quantBits) {
+                                std::string trainImagesFolder, std::string trainImagesTxt,
+                                std::string testImagesFolder, std::string testImagesTxt,
+                                const int trainQuantDelayEpoch, const int quantBits) {
     auto exe = Executor::getGlobalExecutor();
     BackendConfig config;
     exe->setGlobalExecutorConfig(MNN_FORWARD_USER_1, config, 2);
@@ -50,15 +49,14 @@ void MobilenetV2Utils::train(std::shared_ptr<Module> model, const int numClasses
     std::vector<float> scales = {1/127.5, 1/127.5, 1/127.5};
     std::vector<float> cropFraction = {0.875, 0.875}; // center crop fraction for height and width
     bool centerOrRandomCrop = false; // true for random crop
-    std::shared_ptr<ImageDataset::ImageConfig> datasetConfig(
-            ImageDataset::ImageConfig::create(converImagesToFormat, resizeHeight, resizeWidth, scales, means,cropFraction, centerOrRandomCrop));
+    std::shared_ptr<ImageDataset::ImageConfig> datasetConfig(ImageDataset::ImageConfig::create(converImagesToFormat, resizeHeight, resizeWidth, scales, means,cropFraction, centerOrRandomCrop));
     bool readAllImagesToMemory = false;
     auto trainDataset = ImageDataset::create(trainImagesFolder, trainImagesTxt, datasetConfig.get(), readAllImagesToMemory);
     auto testDataset = ImageDataset::create(testImagesFolder, testImagesTxt, datasetConfig.get(), readAllImagesToMemory);
 
-    const int trainBatchSize = 4;
-    const int trainNumWorkers = 1;
-    const int testBatchSize = 1;
+    const int trainBatchSize = 32;
+    const int trainNumWorkers = 4;
+    const int testBatchSize = 10;
     const int testNumWorkers = 0;
 
     auto trainDataLoader = trainDataset.createLoader(trainBatchSize, true, true, trainNumWorkers);
@@ -83,35 +81,28 @@ void MobilenetV2Utils::train(std::shared_ptr<Module> model, const int numClasses
                 // turn model to train quant model
                 std::static_pointer_cast<PipelineModule>(model)->toTrainQuant(quantBits);
             }
-            for (int i = 0; i < trainIterations && i<500; i++) {
+            for (int i = 0; i < trainIterations; i++) {
                 AUTOTIME;
-                MNN_MEMORY_PROFILE("begin an iteration")
                 auto trainData  = trainDataLoader->next();
                 auto example    = trainData[0];
 
                 // Compute One-Hot
-                auto newTarget = _OneHot(_Cast<int32_t>(_Squeeze(example.second[0] + _Scalar<int32_t>(addToLabel), {1})),
-                                         _Scalar<int>(numClasses), _Scalar<float>(1.0f),
+                auto newTarget = _OneHot(_Cast<int32_t>(_Squeeze(example.second[0] + _Scalar<int32_t>(addToLabel), {})),
+                                  _Scalar<int>(numClasses), _Scalar<float>(1.0f),
                                          _Scalar<float>(0.0f));
 
                 auto predict = model->forward(_Convert(example.first[0], NC4HW4));
                 auto loss    = _CrossEntropy(predict, newTarget);
-//                loss->readMap<float>();
-//                continue;
-//                loss->readMap<float>();
-//                return;
                 // float rate   = LrScheduler::inv(0.0001, solver->currentStep(), 0.0001, 0.75);
-//                float rate = 1e-5;
-//                solver->setLearningRate(rate);
-//                if (solver->currentStep() % 10 == 0) {
-//                    std::cout << "train iteration: " << solver->currentStep();
-//                    std::cout << " loss: " << loss->readMap<float>()[0];
-//                    std::cout << " lr: " << rate << std::endl;
-//                }
+                float rate = 1e-5;
+                solver->setLearningRate(rate);
+                if (solver->currentStep() % 10 == 0) {
+                    std::cout << "train iteration: " << solver->currentStep();
+                    std::cout << " loss: " << loss->readMap<float>()[0];
+                    std::cout << " lr: " << rate << std::endl;
+                }
                 solver->step(loss);
-                return ;
             }
-            return;
         }
 
         int correct = 0;

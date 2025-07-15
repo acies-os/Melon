@@ -1,5 +1,6 @@
 #include "ExecutionPlanGenerator.hpp"
 #include "SegmentTree.hpp"
+#include <string>
 
 string RECOMPUTE_SUFFIX = "_recompute";
 
@@ -811,7 +812,7 @@ void Recomputer::calibrated_compute(string ith, bool recompute) {
     // during the recompute process, all tensor are considered equally but the reisze-tensor is only a tmp var
     // it is only used to assist the computation of the other tensors, i.e., the output of each OP
     for (auto t : profiler->io_info[stoi(ith)].outputs) {
-        grd_allocator->allocate(t);
+        // grd_allocator->allocate(t, calibrated_timestamp);
         // it's important to allocate to know the compute seq
         allocated_tensor.insert(t);
     }
@@ -857,6 +858,7 @@ void Recomputer::memory_calibrated_progressive_recomputation() {
         }
         calibrated_compute(info.opid, false);
         current_progress = info.opid;
+        printf("current_progress = %s\n", current_progress.c_str());
     }
     debug_print("%s: exe_seq.size = %lu\n", __FUNCTION__, exe_seq.size())
     adjust_exe_seq();
@@ -951,6 +953,7 @@ bool GreedyAllocator::load_info_via_exe_seq() {
             op_comp_idx.erase(iter);
         }
     }
+    printf("recomp_seq_info.size() = %zu\n", recomp_seq_info.size());
     for (auto &p : update_redundent_parent) {
         profiler->redundent_parent[p.first] = p.second;
     }
@@ -959,6 +962,7 @@ bool GreedyAllocator::load_info_via_exe_seq() {
         recomp_seq_info[iter.second].free = recomp_seq_info.size();
     }
     op_comp_idx.clear();
+    // build heu_info
     for (int i = 0; i < recomp_seq_info.size(); i++) {
         // output info
         auto &info = recomp_seq_info[i];
@@ -1327,9 +1331,12 @@ void GreedyAllocator::insert_tensors(vector<string> tids, int timestamp) {
 }
 
 
-void GreedyAllocator::allocate(string tid) {
+void GreedyAllocator::allocate(string tid, int current_timestamp) {
     if (tid.find(":") == string::npos) {
         allocated_sequence.push_back(tid);
+        vector<string> tids;
+        tids.push_back(tid);
+        insert_tensors(tids, current_timestamp);
     }
 }
 
@@ -1371,6 +1378,7 @@ void GreedyAllocator::heuristic_alloc() {
             load_info_via_exe_seq();
         }
     }
+    printf("infos.size() = %lu\n", infos.size());
 
     if (infos.empty()) {
         debug_print("%s: error to heuristic_alloc via empty infos\n", __FUNCTION__)
@@ -1404,6 +1412,7 @@ void GreedyAllocator::heuristic_alloc() {
 //        debug_print("%s\t%zu\n", infos[i].id.c_str(), heuristic_address[i].first);
 //    }
 //    debug_print("max-address:%zu(%lu)\n", max_address, to_string(max_address).size());
+    printf("finished heuristic alloc, %lu tensors allocated\n", infos.size());
     dump_heuristic_result();
 }
 

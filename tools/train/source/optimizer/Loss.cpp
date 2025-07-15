@@ -14,6 +14,7 @@ namespace MNN {
 namespace Train {
 
 Express::VARP _CrossEntropy(Express::VARP predicts, Express::VARP oneHotTargets) {
+    MNN_PRINT("predicts->dim = %zu, oneHotTargets->dim = %zu\n", predicts->getInfo()->dim.size(), oneHotTargets->getInfo()->dim.size());
     MNN_ASSERT(predicts->getInfo()->dim.size() == 2);
     MNN_ASSERT(predicts->getInfo()->dim == oneHotTargets->getInfo()->dim);
     auto loss = _Negative(_ReduceMean(_ReduceSum(_Log(predicts) * oneHotTargets, {1}), {}));

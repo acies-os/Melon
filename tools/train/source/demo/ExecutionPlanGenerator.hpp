@@ -22,8 +22,8 @@
 using namespace std;
 
 
-#define debug_print(format, ...) {printf(format, ##__VA_ARGS__);fflush(stdout);}
-// #define debug_print(format, ...)
+//#define debug_print(format, ...) {printf(format, ##__VA_ARGS__);fflush(stdout);}
+#define debug_print(format, ...)
 
 
 class VanillaAllocator;
@@ -193,7 +193,7 @@ public:
 
     void insert_tensors(vector<string> tids, int timestamp);
 
-    void allocate(string tid);
+    void allocate(string tid, int current_timestamp);
 
     void check_topology();
 
@@ -231,7 +231,7 @@ public:
         debug_print("finish load info with io_info.size = %lu\n", profiler->io_info.size())
 
         // NOTE(jinyang): This might have to to be "true" instead of noRecompute
-        shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, true);
+        shared_ptr<GreedyAllocator> grd_allocator = make_shared<GreedyAllocator>(profiler, mem_bgt, noRecompute);
 
         grd_allocator->heuristic_alloc();
         grd_allocator->build_topology();
@@ -243,6 +243,7 @@ public:
         // NOTE(jinyang): the first time we run this, it will generate the
         // heuristic/execution/<model>/<model>.<batch>.<budget>.execution.txt
         // files
+        if (!noRecompute) return 0;
         recomputer->memory_calibrated_progressive_recomputation();
 
         // debug_print("noRecompute=%d\n", noRecompute);

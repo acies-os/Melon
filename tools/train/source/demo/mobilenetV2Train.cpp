@@ -88,9 +88,9 @@ public:
         std::string testImagesFolder = argv[3];
         std::string testImagesTxt = argv[4];
 
-        std::shared_ptr<Module> model(new MobilenetV2);
+        std::shared_ptr<Module> model(new MobilenetV2(2));
 
-        MobilenetV2Utils::train(model, 1001, 1, trainImagesFolder, trainImagesTxt, testImagesFolder, testImagesTxt);
+        MobilenetV2Utils::train(model, 2, 0, trainImagesFolder, trainImagesTxt, testImagesFolder, testImagesTxt);
 
         return 0;
     }
