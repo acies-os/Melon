@@ -171,19 +171,19 @@ public:
                 trainDataLoader->reset();
                 model->setIsTraining(true);
                 // turn float model to quantize-aware-training model after a delay
-                if (epoch == trainQuantDelayEpoch) {
-                    // turn model to train quant model
-                    std::static_pointer_cast<PipelineModule>(model)->toTrainQuant(quantBits);
-                }
+                // if (epoch == trainQuantDelayEpoch) {
+                //     // turn model to train quant model
+                //     std::static_pointer_cast<PipelineModule>(model)->toTrainQuant(quantBits);
+                // }
                 int numIteration = 2;
                 if (target == "adaptive") numIteration = 1;
                 if (target == "profile" || target == "resize" || target == "cost") {
                     numIteration = 1;
                 }
-                for (int i = 0; i < numIteration * (trainBatchSize / trainMicroBatchsize); i++) {
+                for (int i = 0; i < trainIterations; i++) {
                     MNN_DEBUG_PRINT("exe->gc()\n")
-                    exe->gc();
-                    trainDataLoader->reset();
+                    //exe->gc();
+                    //trainDataLoader->reset();
                     AUTOTIME;
                     MNN_MEMORY_PROFILE("begin an iteration")
                     MNN_PRINT("begin an iteration %d\n", i);
@@ -191,27 +191,26 @@ public:
                     auto example    = trainData[0];
 
                     // Compute One-Hot
-                    auto newTarget = _OneHot(_Cast<int32_t>(_Squeeze(example.second[0] + _Scalar<int32_t>(addToLabel), {1})),
+                    auto newTarget = _OneHot(_Cast<int32_t>(_Squeeze(example.second[0] + _Scalar<int32_t>(addToLabel), {})),
                                              _Scalar<int>(numClasses), _Scalar<float>(1.0f),
                                              _Scalar<float>(0.0f));
 
                     auto predict = model->forward(_Convert(example.first[0], NC4HW4));
                     auto loss    = _CrossEntropy(predict, newTarget);
                     // float rate   = LrScheduler::inv(0.0001, solver->currentStep(), 0.0001, 0.75);
-                    float rate = 1e-5;
+                    float rate = 1e-4;
 //                    loss->readMap<float>();
 //                    return;
                     solver->setLearningRate(rate);
-//                if (solver->currentStep() % 10 == 0) {
-//                    std::cout << "train iteration: " << solver->currentStep();
-//                    std::cout << " loss: " << loss->readMap<float>()[0];
-//                    std::cout << " lr: " << rate << std::endl;
-//                }
+               if (solver->currentStep() % 10 == 0) {
+                   std::cout << "train iteration: " << solver->currentStep();
+                   std::cout << " loss: " << loss->readMap<float>()[0];
+                   std::cout << " lr: " << rate << std::endl;
+               }
                     solver->step(loss);
 //                    loss->readMap<float>();
 //                    return;
                 }
-                return;
             }
 
             int correct = 0;

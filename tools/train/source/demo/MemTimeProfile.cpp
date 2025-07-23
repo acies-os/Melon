@@ -65,19 +65,19 @@ public:
                     || modelname == "Resnet34NoBN" || modelname == "Resnet50NoBN") {
                 std::string trainImagesFolder = argv[2];
                 std::string trainImagesTxt = argv[3];
-                std::string testImagesFolder = argv[2];
-                std::string testImagesTxt = argv[3];
-                int batchsize = atoi(argv[4]);
-                int microBatchsize = atoi(argv[5]);
+                std::string testImagesFolder = argv[4];
+                std::string testImagesTxt = argv[5];
+                int batchsize = atoi(argv[6]);
+                int microBatchsize = atoi(argv[7]);
                 std::string method = "mnn";
                 size_t bgt = 5500, bgt_adap = -1;  //bgt == 5500 or 3800
                 float prog = 1.0;
                 MNN_DEBUG_PRINT("argc = %d\n", argc)
-                if (argc >= 7) {
-                    method = argv[6];
+                if (argc >= 9) {
+                    method = argv[8];
                 }
-                if(argc >= 8) {
-                    bgt = atoi(argv[7]);
+                if(argc >= 10) {
+                    bgt = atoi(argv[9]);
                     if (bgt == 6) {
                         bgt = 3800;
                     } else if (bgt == 8) {
@@ -96,11 +96,11 @@ public:
                         return 0;
                     }
                 }
-                if(argc >= 9) {
-                    bgt_adap = atoi(argv[8]);
+                if(argc >= 11) {
+                    bgt_adap = atoi(argv[10]);
                 }
-                if(argc >= 10) {
-                    prog = atof(argv[9]);
+                if(argc >= 12) {
+                    prog = atof(argv[11]);
                 }
                 MNN_DEBUG_PRINT("%s\n", method.c_str());
                 std::shared_ptr<Module> model;
