@@ -8,6 +8,8 @@
 
 #include <MNN/MNNDefine.h>
 #include "DemoUnit.hpp"
+#include <chrono>
+#include <iostream>
 int main(int argc, const char* argv[]) {
 //#ifdef DEBUG_EXECUTION_DETAIL
 //    MNN_PRINT("defined DEBUG_EXECUTION_DETAIL\n");
@@ -34,6 +36,10 @@ int main(int argc, const char* argv[]) {
         MNN_ERROR("Can't find demo %s\n", argv[1]);
         return 0;
     }
+    auto start = std::chrono::high_resolution_clock::now();
     demo->run(argc - 1, argv + 1);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+    std::cout << "Total time: " << duration.count() << " s" << std::endl;
     return 0;
 }

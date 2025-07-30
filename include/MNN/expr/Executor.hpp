@@ -79,6 +79,8 @@ private:
     std::shared_ptr<Profiler> mProfiler;
     bool mHeuristic = false;
     std::string mModelname;
+    std::vector<float> mTemp;
+    int mCounter = 0;
     int mBatchsize;
     std::string mTarget;
     size_t mBudgetMB;

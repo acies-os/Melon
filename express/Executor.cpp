@@ -6,8 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
+#include <fstream>
 #include <set>
 #include <MNN/expr/Executor.hpp>
+#include "MNN/MNNDefine.h"
 #include "core/Session.hpp"
 #include "core/TensorUtils.hpp"
 #include "Utils.hpp"
@@ -17,6 +19,7 @@
 #include "geometry/GeometryComputerUtils.hpp"
 #include <MNN/expr/ExecutorScope.hpp>
 #include <core/BufferAllocator.hpp>
+#include <iostream>
 #ifdef MNN_EXPR_ENABLE_PROFILER
 #define MNN_EXPRESS_ERROR_REPORT
 #endif
@@ -2188,7 +2191,24 @@ void Executor::makeCache(const std::vector<EXPRP>& expr, bool forceCPU) {
     std::lock_guard<std::mutex> _l(mMutex);
     //FUNC_PRINT(mCaches.size());
     _makeCache(expr, forceCPU);
+    if (mCounter % 100 == 0) {
+        std::ifstream ifs("/sys/class/thermal/thermal_zone0/temp", std::ios::in);
+        if (!ifs) {
+            MNN_PRINT("failed to open temperature file.\n");
+            MNN_ASSERT(false);
+        }
+        while (ifs) {
+            float temp;
+            ifs >> temp;
+            if (ifs) {
+                mTemp.push_back(temp);
+            }
+        }
+    ifs.close();
+    }
+    mCounter++;
 }
+
 void Executor::addOpCostTime(int op, float costTime) {
 #ifdef MNN_EXPR_ENABLE_PROFILER
     auto opType = MNN::EnumNameOpType((OpType)op);
@@ -2231,6 +2251,7 @@ ErrorCode Executor::runCache(std::shared_ptr<ComputeCache> cache) {
     return cache->compute();
 }
 void Executor::resetProfile() {
+    mTemp.clear();
 #ifdef MNN_EXPR_ENABLE_PROFILER
     mProfiler->reset();
 #endif
@@ -2239,6 +2260,18 @@ void Executor::dumpProfile() {
 #ifdef MNN_EXPR_ENABLE_PROFILER
     mProfiler->dump();
 #endif
+    if (mTemp.empty()) {
+        MNN_PRINT("No profile data to dump.\n");
+        return;
+    }
+
+    for (auto& p : mTemp) {
+        MNN_PRINT("%.1f ℃\n", p / 1000.0f);
+    }
+
+    mCounter = 0;
+    mTemp.clear();
+
 }
 
 void Executor::profileCacheExecution(std::shared_ptr<ComputeCache> cache) {
