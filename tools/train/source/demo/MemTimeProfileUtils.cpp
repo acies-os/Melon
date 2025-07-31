@@ -162,7 +162,7 @@ public:
         const int trainIterations = trainDataLoader->iterNumber();
         const int testIterations = testDataLoader->iterNumber();
 
-        for (int epoch = 0; epoch < 20; ++epoch) {
+        for (int epoch = 0; epoch < 10; ++epoch) {
             model->clearCache();
             exe->gc(Executor::FULL);
             exe->resetProfile();

@@ -956,6 +956,21 @@ ErrorCode Executor::ComputeCache::computeIthOp(int i, bool profile, bool recompu
 #ifdef PROFILE_COST_IN_LOG
     AUTOTIME;
 #endif
+    // auto exe = ExecutorScope::Current();
+    // std::ifstream ifs("/sys/class/thermal/thermal_zone0/temp", std::ios::in);
+    // if (!ifs) {
+    //     MNN_PRINT("failed to open temperature file.\n");
+    //     MNN_ASSERT(false);
+    // }
+    // while (ifs) {
+    //     float temp;
+    //     ifs >> temp;
+    //     if (ifs) {
+    //         exe->mTemp.push_back(temp);
+    //     }
+    // }
+    // ifs.close();
+
     auto& cmd = mCmdBuffer.command[i];
     auto op = cmd.op;
     bool origin = true;
@@ -2191,22 +2206,6 @@ void Executor::makeCache(const std::vector<EXPRP>& expr, bool forceCPU) {
     std::lock_guard<std::mutex> _l(mMutex);
     //FUNC_PRINT(mCaches.size());
     _makeCache(expr, forceCPU);
-    if (mCounter % 100 == 0) {
-        std::ifstream ifs("/sys/class/thermal/thermal_zone0/temp", std::ios::in);
-        if (!ifs) {
-            MNN_PRINT("failed to open temperature file.\n");
-            MNN_ASSERT(false);
-        }
-        while (ifs) {
-            float temp;
-            ifs >> temp;
-            if (ifs) {
-                mTemp.push_back(temp);
-            }
-        }
-    ifs.close();
-    }
-    mCounter++;
 }
 
 void Executor::addOpCostTime(int op, float costTime) {
