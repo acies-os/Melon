@@ -9,6 +9,7 @@
 #include <fstream>
 #include <set>
 #include <MNN/expr/Executor.hpp>
+#include <unistd.h>
 #include "MNN/MNNDefine.h"
 #include "core/Session.hpp"
 #include "core/TensorUtils.hpp"
@@ -2202,8 +2203,16 @@ void Executor::_makeCache(const std::vector<EXPRP>& expr, bool forceCPU) {
     _create(expr, std::move(inputCaches), std::move(inputNode), forceCPU);
 }
 
+void Executor::_checkTemp() {
+    while (mTemp > mThresTemp) {
+        sleep(5);
+        std::cout << "Executor::_checkTemp: Current temperature is too high, waiting for cooling down..." << std::endl;
+    }
+}
+
 void Executor::makeCache(const std::vector<EXPRP>& expr, bool forceCPU) {
     std::lock_guard<std::mutex> _l(mMutex);
+    _checkTemp();
     //FUNC_PRINT(mCaches.size());
     _makeCache(expr, forceCPU);
 }
@@ -2250,7 +2259,7 @@ ErrorCode Executor::runCache(std::shared_ptr<ComputeCache> cache) {
     return cache->compute();
 }
 void Executor::resetProfile() {
-    mTemp.clear();
+    // mTemp.clear();
 #ifdef MNN_EXPR_ENABLE_PROFILER
     mProfiler->reset();
 #endif
@@ -2259,17 +2268,16 @@ void Executor::dumpProfile() {
 #ifdef MNN_EXPR_ENABLE_PROFILER
     mProfiler->dump();
 #endif
-    if (mTemp.empty()) {
-        MNN_PRINT("No profile data to dump.\n");
-        return;
-    }
+    // if (mTemp.empty()) {
+    //     MNN_PRINT("No profile data to dump.\n");
+    //     return;
+    // }
 
-    for (auto& p : mTemp) {
-        MNN_PRINT("%.1f ℃\n", p / 1000.0f);
-    }
+    // for (auto& p : mTemp) {
+    //     MNN_PRINT("%.1f ℃\n", p / 1000.0f);
+    // }
 
-    mCounter = 0;
-    mTemp.clear();
+    // mCounter = 0;
 
 }
 

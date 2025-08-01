@@ -66,11 +66,19 @@ public:
     void setHeuristicAlloc(bool flag);
     bool getHeuristicAllocFlag();
     void configExecution(std::string modelName, int batchsize, std::string target, size_t budgetMB, size_t adaptiveBudget=-1, float adapProg=1.0);
+    void setThresTemp(float thres) {
+        mThresTemp = thres;
+    }
+    void logTemp(float curTemp) {
+        mTemp = curTemp;
+    }
+
 private:
     void _makeCache(const std::vector<EXPRP>& outputs, bool forceCPU);
     void _create(const std::vector<EXPRP>& outputs, std::set<std::shared_ptr<Executor::ComputeCache>>&& inputCaches, std::set<std::shared_ptr<Expr::Inside>>&& inputNode, bool forceCPU);
 
     void _visit(EXPRP expr, std::set<std::shared_ptr<Executor::ComputeCache>>& inputCaches, std::set<std::shared_ptr<Expr::Inside>>& inputNode);
+    void _checkTemp();
 
     Executor(std::shared_ptr<Runtime> backend, MNNForwardType type);
     std::pair<std::shared_ptr<Runtime>, MNNForwardType> mRuntime;
@@ -79,13 +87,14 @@ private:
     std::shared_ptr<Profiler> mProfiler;
     bool mHeuristic = false;
     std::string mModelname;
-    std::vector<float> mTemp;
+    float mTemp;
     int mCounter = 0;
     int mBatchsize;
     std::string mTarget;
     size_t mBudgetMB;
     size_t mAdaptiveBudgetMB = -1;
     float mAdaptiveProgress = 1.0;
+    float mThresTemp = 50.0f; 
 };
 } // namespace Express
 } // namespace MNN

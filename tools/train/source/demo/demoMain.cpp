@@ -20,6 +20,7 @@ std::atomic<bool> monitor(true);
 
 void readTempFile(int interval_ms){
     while(monitor) {
+        auto exe = MNN::Express::ExecutorScope::Current();
         std::ifstream ifs("/sys/class/thermal/thermal_zone0/temp", std::ios::in);
         if (!ifs) {
             MNN_PRINT("failed to open temperature file.\n");
@@ -31,6 +32,7 @@ void readTempFile(int interval_ms){
         if (temp_c >= 50.0f) {
             overheatCounter++;
         }
+        exe->logTemp(temp_c);
         ifs.close();
         std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
     }
