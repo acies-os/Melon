@@ -209,7 +209,9 @@ public:
                }
                     solver->step(loss);
 //                    loss->readMap<float>();
-//                    return;
+                    if (target == "profile" || target == "resize" || target == "cost") {
+                        return;
+                    }
                 }
             }
 

@@ -63,8 +63,13 @@ int main(int argc, const char* argv[]) {
         MNN_ERROR("Can't find demo %s\n", argv[1]);
         return 0;
     }
-    std::thread tempThread(readTempFile, 1000);
+
+    std::thread tempThread(readTempFile, 200);
     auto start = std::chrono::high_resolution_clock::now();
+    auto exe = MNN::Express::ExecutorScope::Current();
+
+    exe->setThresTemp(50.0f); // Set threshold temperature to 50.0°C
+    exe->setProfileTempThres(55.0f); // Set profile temperature threshold to 55.0°C
     demo->run(argc - 1, argv + 1);
     monitor = false;
     tempThread.join();

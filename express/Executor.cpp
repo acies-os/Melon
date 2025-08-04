@@ -1193,6 +1193,60 @@ ErrorCode Executor::ComputeCache::computeIthOp(int i, bool profile, bool recompu
             }
         }
     }
+
+    if (mComputeTarget == "profile") {
+        // MNN_DEBUG_PRINT("\tbegin onExecute cmd[%d]\n", i)
+        ExecutorScope::Current()->_checkTemp();
+        auto tempBefore = ExecutorScope::Current()->mTemp;
+        int executeCount = 0;
+        // count how many calculations done before exceeding threshold temperature
+        while (ExecutorScope::Current()->mTemp < ExecutorScope::Current()->mProfileTempThres) {
+            executeCount++;
+            code = mExecutions[i]->onExecute(cmd.inputs, cmd.outputs);
+            if (NO_ERROR != code) {
+    #ifdef MNN_EXPRESS_ERROR_REPORT
+            auto op = cmd.buffer.empty() ? cmd.op : flatbuffers::GetRoot<Op>(cmd.buffer.data());
+            MNN_ERROR("Error to compute for %s, \n", EnumNameOpType(op->type()));
+    #endif
+                mBackend->onExecuteEnd();
+                return code;
+            }
+            MNN_DEBUG_PRINT("\t%s: finish onExecute\n", __FUNCTION__ );
+            if (enableSwap) {
+                size_t current_size = mBackend->usedSize();
+                MNN_DEBUG_PRINT("\tmBackend->usedSize() = %lu\n", current_size)
+                if (typeid(mBackend) != typeid(mBackupBackend)) {
+                    current_size += mBackupBackend->usedSize();
+                    MNN_DEBUG_PRINT("\tafter add mBackupBackend->usedSize() = %lu\n", current_size)
+                }
+                while (current_size > budget << 20) {
+                    MNN_DEBUG_PRINT("\ttrigger swap out due to %lu > %lu\n", current_size, budget << 20)
+                    bool swapFlag = false;
+                    for (auto tid: featureMap) {
+                        auto t = mCmdBuffer.command[tid].outputs[0];
+                        if (allocatedTensor.find(t) != allocatedTensor.end() && !featureSwapoutFlag[tid]) {
+                            swapout(t);
+                            TensorUtils::getDescribe(t)->backend->onReleaseBuffer(t, Backend::DYNAMIC);
+                            featureSwapoutFlag[tid] = true;
+                            swapFlag = true;
+                            break;
+                        }
+                    }
+                    if (!swapFlag) {
+                        break;
+                    }
+                    current_size = mBackend->usedSize();
+                    if (typeid(mBackend) != typeid(mBackupBackend)) {
+                        current_size += mBackupBackend->usedSize();
+                    }
+                }
+            }
+        }
+        auto tempAfter = ExecutorScope::Current()->mTemp;
+        MNN_PRINT("\texecuteCount = %d, tempBefore = %.2f, tempAfter = %.2f\n", executeCount, tempBefore, tempAfter);
+
+    }
+
 //    mExecutions[i]->onResizeEnd();
 
     if (viaStrategy) {
@@ -2205,14 +2259,14 @@ void Executor::_makeCache(const std::vector<EXPRP>& expr, bool forceCPU) {
 
 void Executor::_checkTemp() {
     while (mTemp > mThresTemp) {
-        sleep(5);
+        usleep(1000000);
         std::cout << "Executor::_checkTemp: Current temperature is too high, waiting for cooling down..." << std::endl;
     }
 }
 
 void Executor::makeCache(const std::vector<EXPRP>& expr, bool forceCPU) {
     std::lock_guard<std::mutex> _l(mMutex);
-    _checkTemp();
+    //_checkTemp();
     //FUNC_PRINT(mCaches.size());
     _makeCache(expr, forceCPU);
 }

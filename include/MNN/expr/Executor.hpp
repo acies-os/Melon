@@ -69,6 +69,9 @@ public:
     void setThresTemp(float thres) {
         mThresTemp = thres;
     }
+    void setProfileTempThres(float thres) {
+        mProfileTempThres = thres;
+    }
     void logTemp(float curTemp) {
         mTemp = curTemp;
     }
@@ -95,6 +98,7 @@ private:
     size_t mAdaptiveBudgetMB = -1;
     float mAdaptiveProgress = 1.0;
     float mThresTemp = 50.0f; 
+    float mProfileTempThres = 55.0f;
 };
 } // namespace Express
 } // namespace MNN
